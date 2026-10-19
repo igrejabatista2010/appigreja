@@ -46,3 +46,17 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Segredos e ambientes (nunca commitar)
+/env/*.json
+!/env/*.example.json
+.env
+.env.*
+*.keystore
+*.jks
+key.properties
+**/service-account*.json
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/

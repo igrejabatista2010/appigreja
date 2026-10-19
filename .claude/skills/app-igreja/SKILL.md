@@ -1,4 +1,11 @@
+---
+name: app-igreja
+description: Especificação e regras de implementação do app mobile da igreja (Flutter + BLoC + Clean Architecture + Supabase). Use sempre que for criar, alterar ou revisar qualquer funcionalidade, tela, tabela, política RLS ou Edge Function deste app.
+---
+
 # App da Igreja — Especificação para implementação
+
+> Esta skill define **o quê** e **como**. A ordem das tarefas e o que já foi feito ficam em [`docs/plano-backend.md`](../../../docs/plano-backend.md) e [`docs/plano-app.md`](../../../docs/plano-app.md).
 
 ## 1. Contexto
 
@@ -120,7 +127,7 @@ Os testes espelham `lib/` dentro de `test/`.
   - "Hoje" (estudo do dia, contas vencidas, aniversariantes) é sempre o dia em São Paulo.
 - **Dinheiro:** sempre inteiro em **centavos** (`amount_cents`), formatado como `R$` só na UI.
 - **Imagens:** comprimir antes do upload.
-  - Fotos de galeria: lado maior 1600px, qualidade 80.
+  - Fotos de galeria: lado maior 1600px, qualidade 80, mais miniatura de 400px.
   - Avatar e capa: 512px e 1200px, respectivamente.
 - **Strings:** nada de texto literal em widget; tudo nos ARB `pt_BR`.
 - **Layout responsivo:**
@@ -147,7 +154,7 @@ O login é obrigatório. Só usuário `approved` acessa o conteúdo; `pending` v
 ### 6.1 Como a permissão é aplicada (3 camadas, todas obrigatórias)
 
 1. **Banco (RLS):** a camada de segurança real.
-   - Toda política de INSERT, UPDATE e DELETE de conteúdo administrativo usa `is_leader()` ou `is_admin()`.
+   - Toda política de INSERT, UPDATE e DELETE de conteúdo administrativo usa `private.is_leader()` ou `private.is_admin()`.
    - Mesmo que alguém altere o app, o banco recusa.
 2. **Rotas (`go_router`):**
    - rotas de gestão ficam em `/gestao/*` (leader+);
@@ -165,7 +172,7 @@ O login é obrigatório. Só usuário `approved` acessa o conteúdo; `pending` v
 - **Repositórios:** nunca confiam em role vinda da UI. Quem decide é sempre a RLS.
 - **Testes obrigatórios:**
   - Bloc e guardas de rota testados para as três roles;
-  - políticas RLS testadas com três usuários de teste (um por role) no ambiente `dev`.
+  - políticas RLS testadas com três usuários de teste (um por role) no ambiente `dev`, por scripts em `supabase/tests/` (formato na skill `supabase-migrations`, seção 5).
 
 ### 6.3 Telas exclusivas por role
 
@@ -190,8 +197,9 @@ O login é obrigatório. Só usuário `approved` acessa o conteúdo; `pending` v
 - Deve existir **pelo menos um admin** aprovado sempre. Isso é garantido no banco por triggers em `members`, valendo para qualquer origem (app, Edge Function ou SQL):
   - `before update`: impede rebaixar ou bloquear o último admin aprovado;
   - `before delete`: impede excluir o último admin aprovado. Cobre a `delete-account` e a `admin-delete-member`.
-  - Ambos fazem `select ... for update` nas linhas de admin antes de contar, para duas operações simultâneas não removerem os dois últimos admins.
-- O primeiro admin é definido na migration de seed, pelo e-mail da cliente.
+  - Um único trigger (`members_protect_last_admin`, `before update of role, status or delete`) pega um `pg_advisory_xact_lock` antes de contar, para duas operações simultâneas não removerem os dois últimos admins.
+  - O erro tem `hint = 'last_admin'`, que o app usa para mostrar a mensagem certa.
+- O primeiro admin **não** fica em migration (o e-mail muda por ambiente). É definido pelo script `supabase/scripts/first_admin.sql`, rodado uma vez em cada ambiente depois de a pessoa criar a conta.
 
 | Recurso | member | leader | admin |
 |---|---|---|---|
@@ -206,7 +214,7 @@ O login é obrigatório. Só usuário `approved` acessa o conteúdo; `pending` v
 | Agenda recorrente (cultos fixos) | ❌ | ❌ | ✅ |
 | Aprovar cadastros, alterar role/status | ❌ | ❌ | ✅ |
 | Notificação avulsa | ❌ | ✅ | ✅ |
-| Financeiro (contas a pagar) | ❌ | ❌ | ✅ |
+| Financeiro (contas a pagar e fluxo de caixa) | ❌ | ❌ | ✅ |
 
 ## 7. Modelo de dados (Supabase)
 
@@ -218,33 +226,42 @@ Todas as tabelas têm `id uuid pk default gen_random_uuid()`, `created_at timest
 - Autoria de conteúdo (`created_by`, `author_id` em eventos, comunicados, álbuns, vídeos, estudos e contas): `on delete set null`. A UI mostra "Autor removido".
 - Vínculos pessoais (`event_rsvps`, `prayer_intercessions`, `daily_study_reads`, `device_tokens`): `on delete cascade`.
 - `prayer_requests.member_id`: `on delete set null`. O pedido continua no mural como anônimo.
+- `cash_entries.donor_member_id`: `on delete set null`. A entrada continua no caixa, sem o doador.
+- `cash_entries.bill_id → bills`: `on delete set null`. Excluir uma conta já paga não apaga o dinheiro que saiu.
+- `media_photos.album_id → media_albums`: `on delete cascade`. `media_albums.cover_photo_id → media_photos`: `on delete set null` (apagar a foto da capa deixa o álbum sem capa, e o app usa a primeira foto por `position`).
 
 | Tabela | Colunas principais |
 |---|---|
-| `members` | `user_id uuid unique null → auth.users`, `full_name`, `email` (único, minúsculo), `phone`, `birth_date date`, `photo_url`, `role`, `status`, `inchurch_id int unique null` |
+| `members` | `user_id uuid unique null → auth.users`, `full_name`, `email` (único, minúsculo, null para importados sem e-mail), `phone`, `birth_date date`, `photo_url`, `role` (enum `member_role`), `status` (enum `member_status`), `inchurch_id int unique null`. **Ficha (todas opcionais):** `address text`, `gender` (enum `member_gender`: `male`, `female`), `marital_status` (enum `marital_status`: `single`, `married`, `stable_union`, `divorced`, `widowed`), `baptism_date date`, `membership_date date` |
 | `schedule_items` (agenda recorrente) | `title`, `description`, `weekday smallint (0=domingo)`, `start_time time`, `end_time time`, `location`, `active bool` |
 | `events` | `title`, `description`, `cover_url`, `location`, `starts_at`, `ends_at`, `rsvp_enabled bool`, `capacity int null`, `published bool`, `notify_on_publish bool`, `notified_at timestamptz null`, `created_by → members` |
 | `event_rsvps` | `event_id`, `member_id`, `created_at` — pk composta |
 | `announcements` | `title`, `body`, `audience ('all'\|'leaders')`, `pinned bool`, `send_push bool`, `author_id → members`, `published_at` |
 | `prayer_requests` | `member_id`, `body`, `visibility ('public'\|'leaders')`, `is_anonymous bool`, `status ('open'\|'answered'\|'archived')` |
 | `prayer_intercessions` | `request_id`, `member_id` — pk composta ("Estou orando") |
-| `media_albums` | `title`, `description`, `cover_url`, `event_date date`, `created_by` |
-| `media_photos` | `album_id`, `storage_path`, `width`, `height` |
+| `media_albums` | `title`, `description`, `cover_photo_id → media_photos null`, `event_date date`, `created_by` |
+| `media_photos` | `album_id → media_albums`, `storage_path` (1600px), `thumb_path` (400px), `width`, `height`, `position int` (ordem no álbum) |
 | `videos` | `title`, `description`, `youtube_id`, `published_at`, `created_by` |
 | `daily_studies` | `publish_date date unique`, `title`, `bible_reference`, `body` (markdown), `created_by` |
 | `daily_study_reads` | `study_id`, `member_id`, `read_at` — pk composta |
 | `bills` | `description`, `amount_cents int`, `due_date date`, `category`, `status ('pending'\|'paid')`, `paid_at date null`, `notes`, `receipt_path null`, `created_by` |
+| `cash_entries` (caixa único) | `type ('in'\|'out')`, `amount_cents int > 0`, `occurred_on date`, `category` (texto com sugestões), `description`, `payment_method ('cash'\|'pix'\|'transfer'\|'card')`, `donor_member_id → members null`, `donor_name text null`, `bill_id → bills unique null`, `receipt_path null`, `created_by` |
 | `device_tokens` | `member_id`, `token unique`, `platform ('android'\|'ios')` |
 | `push_log` | `title`, `body`, `audience`, `data jsonb`, `sent_by`, `status`, `error` |
 
 **Funções auxiliares para RLS** (`security definer`, `stable`): `current_member_id()`, `is_approved()`, `is_leader()` (leader ou admin) e `is_admin()`.
+- Ficam no schema **`private`**, que não é exposto pela API (`/rest/v1/rpc`). Nas políticas, chamar sempre qualificado e dentro de `select`: `(select private.is_admin())`.
+- Só as RPCs de leitura feitas para o app (ex.: `get_member_directory`) ficam em `public`.
 
 **Configuração do Supabase Auth (obrigatória):**
 - **"Confirm email" ativado.** A confirmação é feita por **código OTP de 6 dígitos**, sem link nem deep link.
   - **Os dois templates** usam `{{ .Token }}`: "Confirm signup" e "Reset Password".
 - Com "Confirm email" ativo, o Supabase **não cria sessão** para quem não confirmou. O `signUp` retorna o usuário sem sessão, e o `signInWithPassword` falha com o código `email_not_confirmed`.
-- **SMTP próprio** configurado em produção (ex.: Resend ou Brevo, no plano gratuito). O SMTP padrão do Supabase tem limite baixíssimo de envios por hora e não serve para produção.
-- Templates de e-mail traduzidos para pt-BR.
+- **SMTP próprio (Brevo, plano gratuito) obrigatório também no `dev`:**
+  - no plano Free, o Supabase **recusa templates personalizados** sem SMTP próprio, e sem o template com `{{ .Token }}` o fluxo por código não funciona;
+  - o SMTP padrão só entrega para membros da equipe da organização e tem limite baixíssimo de envios por hora.
+- Templates de e-mail em pt-BR, versionados em `supabase/templates/` e ligados no `config.toml`.
+- Toda essa configuração fica no `supabase/config.toml` e é aplicada com `supabase config push`, nunca pelo painel.
 
 **Triggers de vínculo (segurança):** o vínculo só acontece **depois de o e-mail ser confirmado**. Assim ninguém assume a conta de um membro importado só por saber o e-mail dele.
 - `after insert on auth.users`: só age se `email_confirmed_at` já vier preenchido. Caso contrário, não faz nada.
@@ -253,15 +270,16 @@ Todas as tabelas têm `id uuid pk default gen_random_uuid()`, `created_at timest
   - Senão: cria um `members` com `status = 'pending'` e `role = 'member'`. O `full_name` e o `phone` são lidos de `raw_user_meta_data`, que o app envia no `signUp(data: {...})`.
   - O trigger **não** dispara push. Quem avisa os admins é o trigger de push de `members` (ver Edge Functions).
 - Ambas as funções são `security definer`, com `search_path` fixo.
-- O membro não pode alterar o próprio `role` nem `status`. Bloquear via política RLS de UPDATE com `WITH CHECK` ou via trigger.
+- O app é a **ficha oficial** da igreja (a InChurch será abandonada). Os campos da ficha seguem a mesma visibilidade do telefone: o próprio membro e leader/admin veem; os outros members não.
+- O membro não pode alterar o próprio `role`, `status`, `email`, `baptism_date` nem `membership_date` (datas eclesiásticas são do admin), e ninguém altera `user_id` ou `inchurch_id` pelo app. Isso é garantido pelo trigger `members_guard_update` (a RLS não compara valor antigo com novo). Chamadas sem usuário (triggers do Auth, service role) passam.
 
 **Dados sensíveis: RLS por linha + RPCs de leitura (obrigatório)**
 
 A RLS controla **linhas, não colunas**. Por isso, tabelas com dados que um member pode ver só em parte **não** liberam SELECT direto para ele. A leitura parcial passa por funções RPC.
 
 Regras das RPCs:
-- `security definer`, `set search_path = public`, `stable`;
-- começam com `if not is_approved() then raise exception`;
+- `security definer`, `set search_path = ''` (nomes qualificados), `stable`;
+- começam com `if not private.is_approved() then raise exception`;
 - devolvem **apenas** as colunas permitidas;
 - `revoke execute ... from anon, public` e `grant execute ... to authenticated`.
 
@@ -287,7 +305,13 @@ Regras das RPCs:
 **Storage:**
 - Buckets **públicos**, com caminhos UUID: `avatars`, `event-covers`, `media`.
   - Escrita só para leader/admin, exceto `avatars`, onde cada usuário escreve só a própria pasta.
-- Bucket **privado** `receipts`: comprovantes, só admin, acesso por URL assinada.
+- Bucket **privado** `receipts`: comprovantes de `bills` e `cash_entries`, só admin, acesso por URL assinada.
+- **Apagar a linha no banco não apaga o arquivo no Storage** (nem por `cascade`). Toda exclusão que envolve arquivo remove os arquivos também:
+  - foto: `storage_path` e `thumb_path`;
+  - álbum: todos os arquivos das fotos dele, antes de apagar o álbum;
+  - capa de evento, avatar e comprovante: o arquivo antigo, ao trocar ou excluir.
+  - O app remove primeiro os arquivos e depois a linha. Se a remoção de arquivo falhar, a linha **não** é apagada e o erro aparece com "Tentar novamente".
+- Caminhos: `media/<album_id>/<photo_id>.jpg` e `media/<album_id>/<photo_id>_thumb.jpg`, para que um álbum possa ser limpo pela pasta.
 
 **Edge Functions:**
 - `send-push`:
@@ -315,7 +339,7 @@ Regras das RPCs:
     - confirmações, intercessões, leituras e tokens são apagados (`cascade`);
     - o conteúdo criado pelo membro permanece, com autor nulo (`set null`).
 - `admin-delete-member`:
-  - valida no próprio código que quem chama é admin (lê o JWT e consulta `is_admin()`);
+  - valida no próprio código que quem chama é admin: obtém o usuário pelo JWT (`auth.getUser`) e, com a secret key, confere em `members` se ele é `admin` e `approved` (as funções `private.*` não são acessíveis pela API);
   - segue **a mesma ordem da `delete-account`**: primeiro apaga o `members`, depois exclui o usuário do Auth (se houver). As FKs aplicam as mesmas regras;
   - impede excluir o último admin e excluir a si mesmo (para isso existe a `delete-account`).
 
@@ -330,6 +354,16 @@ Regras das RPCs:
 - Adicionar `members` à publicação: `alter publication supabase_realtime add table members;`.
 - A RLS também vale para o Realtime. Como member só tem SELECT na própria linha, ele só recebe as próprias mudanças.
 - O app ainda assina com o filtro `user_id=eq.<uid>`, para leader e admin não receberem as mudanças de todos.
+
+**Fluxo de caixa:**
+- `bills` e `cash_entries`: RLS **só admin** (leitura e escrita). Doador e valor doado são dados sensíveis (LGPD).
+- Trigger `after update of status, amount_cents, paid_at on bills`:
+  - `pending` → `paid`: cria a saída em `cash_entries` (`type = 'out'`, valor, `occurred_on = paid_at`, categoria e descrição da conta, `bill_id`, comprovante);
+  - `paid` → `pending` (desfazer): apaga a saída ligada;
+  - conta já paga com valor ou data alterados: atualiza a saída ligada.
+- Saídas com `bill_id` **não são editadas nem apagadas direto** (trigger em `cash_entries`). Elas mudam só pela conta a pagar.
+- Doador só em entradas (`check`): `donor_member_id` ou `donor_name`, ambos opcionais. Sem nenhum dos dois, o app mostra "Não informado".
+- Saldo = soma das entradas − soma das saídas, calculado no banco por RPC (`get_cash_summary(from_date, to_date)` → saldo atual, entradas e saídas do período, totais por categoria).
 
 **Integridade no banco:**
 - **Lotação de evento:** trigger `before insert on event_rsvps`.
@@ -382,7 +416,8 @@ Formato: **ator** — fluxo — regras — critérios de aceite (CA).
 ### Membros (`members`)
 
 **UC-06 Ver e editar meu perfil**
-- Campos: foto (com compressão), nome, telefone e data de nascimento. O e-mail é só leitura.
+- Campos editáveis: foto (com compressão), nome, telefone, data de nascimento, endereço, gênero e estado civil.
+- Só leitura: e-mail, data de batismo e data de membresia (essas duas são preenchidas pelo admin).
 
 **UC-07 Diretório de membros** — approved
 - Lista paginada com busca por nome (debounce de 400ms).
@@ -401,7 +436,7 @@ Formato: **ator** — fluxo — regras — critérios de aceite (CA).
 - Ao aprovar, o usuário recebe um push "Seu cadastro foi aprovado".
 
 **UC-10 Gerenciar membro** — admin
-- Editar dados, `role` e `status`.
+- Editar todos os dados da ficha (incluindo batismo e membresia), `role` e `status`.
 - Cadastrar membro manualmente, sem conta. Ele se vincula ao criar conta com o mesmo e-mail.
 - CA: o admin não pode remover o próprio papel de admin.
 
@@ -494,7 +529,8 @@ Formato: **ator** — fluxo — regras — critérios de aceite (CA).
 
 **UC-29 Criar álbum e enviar fotos** — leader/admin
 - Seleção múltipla, compressão, upload com barra de progresso por foto e possibilidade de tentar de novo as que falharem.
-- Definir capa; excluir fotos.
+- Cada foto gera **duas versões no app** antes do upload: 1600px (qualidade 80) e miniatura de 400px. Grades usam a miniatura; o visualizador em tela cheia usa a de 1600px.
+- Definir capa (uma foto do álbum); reordenar fotos (`position`); excluir fotos e o álbum, removendo também os arquivos do Storage.
 
 **UC-30 Adicionar vídeo** — leader/admin
 - Colar uma URL do YouTube (formatos `watch?v=`, `youtu.be/`, `shorts/`, `live/`).
@@ -525,12 +561,29 @@ Formato: **ator** — fluxo — regras — critérios de aceite (CA).
 
 **UC-36 Cadastrar/editar/excluir conta**
 - Campos: descrição, valor (máscara R$, salvo em centavos), vencimento, categoria (texto com sugestões das já usadas) e observação.
+- Botão **"Copiar contas do mês anterior"**: mostra as contas do mês anterior para o admin marcar quais repetir; as escolhidas são criadas no mês atual como `pending`, com o mesmo dia de vencimento (ajustado para o último dia do mês, se necessário) e o valor editável antes de salvar. Não existe recorrência automática no banco.
 
 **UC-37 Marcar como paga / desfazer**
 - Informa a data do pagamento (padrão: hoje) e, opcionalmente, anexa o comprovante (foto, bucket `receipts`).
+- Marcar como paga gera a saída no caixa automaticamente; desfazer remove essa saída (trigger no banco, ver seção 7).
 
 **UC-38 Lembrete de vencimento**
 - O pg_cron envia push aos admins sobre as contas pendentes que vencem em até 2 dias.
+
+**UC-41 Fluxo de caixa** — admin
+- Mostra o **saldo atual** e, para o mês escolhido: total de entradas, total de saídas e totais por categoria.
+- Lista as movimentações do mês (entradas em verde, saídas em vermelho), com filtro por tipo e categoria.
+- As saídas geradas por contas pagas aparecem com o selo "Conta a pagar" e levam à conta ao tocar.
+
+**UC-42 Registrar entrada** — admin
+- Campos: valor (máscara R$), data (padrão: hoje), categoria (sugestões: Dízimo, Oferta, Doação, Evento, Outros), forma de pagamento, doador e descrição.
+- Doador: escolher um membro da lista **ou** digitar um nome livre (visitante, "Anônimo"). Opcional.
+- Comprovante opcional (bucket `receipts`).
+
+**UC-43 Registrar saída avulsa** — admin
+- Para gastos que não passaram por contas a pagar (ex.: compra de material).
+- Campos: valor, data, categoria, forma de pagamento, descrição e comprovante opcional.
+- Editar e excluir entradas e saídas avulsas. Saídas de contas pagas só mudam pela conta (UC-37).
 
 ### Início (`home`)
 
@@ -561,7 +614,7 @@ Destinos principais:
 - **Mais**, que agrupa:
   - **para todos:** Mídias, Estudos, Membros, Meu perfil;
   - **seção "Gestão"** (leader e admin, rotas `/gestao/*`): Eventos, Comunicados, Notificação avulsa, Oração da liderança, Mídias (gestão), Estudos programados;
-  - **seção "Administração"** (só admin, rotas `/admin/*`): Aprovações, Membros (gestão e roles), Agenda fixa, Moderação de oração, Financeiro.
+  - **seção "Administração"** (só admin, rotas `/admin/*`): Aprovações, Membros (gestão e roles), Agenda fixa, Moderação de oração, Financeiro (contas a pagar e caixa).
 
 Guardas do `go_router`, avaliados nesta ordem no `redirect`:
 1. sem sessão → `/login` (as rotas públicas `/login`, `/cadastro`, `/confirmar-email` e `/recuperar-senha` são liberadas);
@@ -587,21 +640,27 @@ O `redirect` escuta o `AuthBloc` (via `refreshListenable`), então qualquer muda
 
 ## 11. Ordem de implementação
 
+Visão geral das etapas. O detalhamento em tarefas e o status ficam em `docs/plano-backend.md` e `docs/plano-app.md`.
+
 1. **Fundação:**
-   - **`git init`** antes de qualquer código. O `.gitignore` cobre `.env`, chaves, `*.keystore`/`*.jks` e a service role. Commits pequenos, um por caso de uso;
+   - **git** antes de qualquer código. O `.gitignore` cobre `env/*.json`, `.env`, chaves, `*.keystore`/`*.jks` e service accounts. Commits pequenos, um por caso de uso;
    - projeto, DI, rotas, tema, l10n;
-   - **flavors `dev` e `prod`**, cada um com seu próprio backend e Firebase:
-     - **Supabase:** dois projetos. `dev` fica na conta pessoal do dev (plano Free); `prod` fica na organização da igreja (plano Pro).
-       - Projetos Free pausam após ~7 dias sem uso. Para reativar, basta clicar em "Restore" no painel, e os dados não se perdem.
-     - **Firebase:** um único projeto com **dois apps registrados por plataforma** (ids `…igreja.dev` e `…igreja`), configurados com `flutterfire configure` por flavor. Resultado: um `google-services.json` em `android/app/src/<flavor>/` e um `GoogleService-Info.plist` por flavor no iOS (copiado por script de build).
-     - O Codemagic tem um workflow por flavor, com os arquivos e chaves vindos de variáveis de ambiente criptografadas.
-   - migrations SQL do Supabase (tabelas, funções, triggers, RLS, buckets) em `supabase/migrations/`;
-   - `codemagic.yaml` para Android e iOS (TestFlight).
+   - migrations SQL do Supabase em `supabase/migrations/`, **sempre** seguindo a skill `supabase-migrations`. O desenvolvimento usa o Supabase na nuvem (projeto `dev`), sem stack local.
 2. **Auth e membros:** UC-01 a UC-10, mais o UC-40 (importação).
-3. **Agenda/eventos, estudo diário e oração:** UC-11 a UC-16, UC-31 a UC-34 e UC-22 a UC-26. → **1ª versão de teste para a cliente.**
-4. **Notificações, comunicados e mídias:** UC-17 a UC-21 e UC-27 a UC-30.
-5. **Financeiro e Início:** UC-35 a UC-39.
-6. **Polimento:** testes com um grupo da igreja, ajustes, ícones e publicação nas lojas.
+3. **Agenda/eventos, estudo diário e oração:** UC-11 a UC-16, UC-31 a UC-33 e UC-22 a UC-26.
+4. **Comunicados e mídias:** UC-17, UC-18 e UC-27 a UC-30.
+5. **Financeiro e Início:** UC-35 a UC-37, UC-41 a UC-43 (fluxo de caixa) e UC-39.
+6. **Notificações:** Firebase, `device_tokens`, `send-push`, triggers de push, jobs do pg_cron; UC-19 a UC-21, UC-34, UC-38 e os pushes previstos nos outros UCs (novo cadastro, cadastro aprovado, evento publicado, comunicado).
+7. **Distribuição e publicação:** flavors `dev`/`prod`, Codemagic (Android e iOS via TestFlight), projeto Supabase `prod`, ícones, versão de teste para a cliente e um grupo da igreja, publicação nas lojas.
+
+**Até a etapa 6, nada de push:** as colunas `announcements.send_push`, `events.notify_on_publish` e `events.notified_at` já são criadas e as telas salvam esses valores, mas o envio só passa a existir na etapa 6. Até a etapa 7, o app roda só no emulador, apontando para o Supabase `dev`.
+
+**Ambientes:**
+- **Supabase `dev`:** projeto atual na conta da igreja (plano Free, `us-east-1`). É descartável e será desligado depois que o `prod` existir.
+  - Projetos Free pausam após ~7 dias sem uso. Para reativar, basta clicar em "Restore" no painel, e os dados não se perdem.
+- **Supabase `prod`:** projeto novo na conta da igreja, região **São Paulo**, plano Pro. Recriado do zero com `db push` + `config push` + `functions deploy`.
+- **Firebase:** um único projeto com **dois apps registrados por plataforma** (ids `…igreja.dev` e `…igreja`), configurados com `flutterfire configure` por flavor. Resultado: um `google-services.json` em `android/app/src/<flavor>/` e um `GoogleService-Info.plist` por flavor no iOS (copiado por script de build).
+- **Codemagic:** um workflow por flavor, com os arquivos e chaves vindos de variáveis de ambiente criptografadas.
 
 Ao terminar cada etapa, rodar `flutter analyze` sem warnings e `flutter test` com tudo passando.
 
@@ -614,13 +673,18 @@ Ao terminar cada etapa, rodar `flutter analyze` sem warnings e `flutter test` co
 - [ ] Textos em ARB pt_BR; layout conferido em celular e tablet.
 - [ ] Sem `print`, sem chave sensível no código, `flutter analyze` limpo.
 
-## 13. Premissas a confirmar com a cliente
+## 13. Premissas
 
-Implementar conforme as premissas abaixo, mas manter o código fácil de ajustar:
+Fonte original: [`docs/requisitos-cliente.md`](../../../docs/requisitos-cliente.md).
 
-1. "Lideranças (aba mensagens)" = comunicados de mão única, **não** chat.
-2. Pedido anônimo fica oculto para membros, mas leaders e admins veem o autor.
-3. Membros comuns veem só nome e foto no diretório.
-4. Células **fora do escopo** desta versão.
-5. Financeiro restrito a admin (não existe role "tesoureiro").
-6. Eventos com confirmação de presença opcional, sem venda de ingresso.
+**Confirmadas:**
+1. "Lideranças (aba mensagens)" = comunicados de mão única dos líderes, **não** chat.
+2. Células **fora do escopo**. A menção da cliente a células só detalhava o financeiro.
+3. O app substitui a InChurch e é a ficha oficial dos membros (campos de ficha em `members`).
+
+**A confirmar com a cliente** (implementar assim, mas manter o código fácil de ajustar):
+1. Pedido anônimo fica oculto para membros, mas leaders e admins veem o autor.
+2. Membros comuns veem só nome e foto no diretório.
+3. Financeiro restrito a admin (não existe role "tesoureiro").
+4. Eventos com confirmação de presença opcional, sem venda de ingresso.
+5. **Fluxo de caixa (UC-41 a UC-43):** sugestão do desenvolvedor, além do pedido da cliente (que citou só contas a pagar). Mostrar a ideia à cliente antes de implementar a etapa 5.
