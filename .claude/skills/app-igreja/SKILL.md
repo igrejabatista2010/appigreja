@@ -33,7 +33,7 @@ description: Especificação e regras de implementação do app mobile da igreja
 8. **A segurança vem da RLS.** Esconder botões na UI é só experiência do usuário, nunca controle de acesso.
 9. Nunca embarcar a **secret key** (`sb_secret_...`, antiga `service_role`) no app.
    - `SUPABASE_URL` e `SUPABASE_PUBLISHABLE_KEY` (`sb_publishable_...`, antiga `anon`) entram via `--dart-define-from-file=env/<ambiente>.json`, com `env/*.json` no `.gitignore`.
-   - No código: `Supabase.initialize(url: ..., anonKey: const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY'))`. O parâmetro do `supabase_flutter` ainda se chama `anonKey`, mas recebe a publishable key.
+   - No código: `Supabase.initialize(url: Env.supabaseUrl, publishableKey: Env.supabasePublishableKey)` (`core/config/env.dart`). O parâmetro `anonKey` do `supabase_flutter` está depreciado.
 
 ## 3. Pacotes permitidos
 
@@ -50,6 +50,7 @@ description: Especificação e regras de implementação do app mobile da igreja
 | Calendário | `table_calendar` |
 | Formatação / i18n | `intl`, `flutter_localizations` |
 | Links externos | `url_launcher`, `share_plus` |
+| Erros de rede | `http` (só para capturar `ClientException`, que o Postgrest lança sem rede e o `supabase_flutter` não reexporta) |
 | Markdown (estudo diário) | `flutter_markdown_plus` (o `flutter_markdown` foi descontinuado) |
 | Fuso horário | `timezone` |
 | Ícone e splash (dev_dependencies) | `flutter_launcher_icons`, `flutter_native_splash` |
@@ -66,12 +67,13 @@ lib/
   core/
     di/injection.dart           # registro get_it
     error/failures.dart         # Failure (sealed) e subtipos
-    error/exceptions.dart
+    error/failure_mapper.dart   # exceções (Postgrest, Auth, Storage, Function, rede) → Failure
+    config/env.dart             # SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY (dart-define)
     usecase/usecase.dart        # abstract class UseCase<T, Params>
     router/app_router.dart      # go_router + guards de auth/status/role
     theme/                      # cores da igreja, tipografia
-    l10n/                       # ARB pt_BR
-    utils/                      # datas, moeda (centavos), validadores, compressão de imagem
+    l10n/                       # app_pt.arb (texto em pt-BR) + generated/ (gen-l10n, versionado)
+    utils/                      # church_time, breakpoints, moeda (centavos), validadores, compressão de imagem
     widgets/                    # componentes compartilhados (loading, erro com retry, vazio)
     push/push_service.dart      # FCM + notificações locais + roteamento por payload
   features/
@@ -257,9 +259,13 @@ Todas as tabelas têm `id uuid pk default gen_random_uuid()`, `created_at timest
 - **"Confirm email" ativado.** A confirmação é feita por **código OTP de 6 dígitos**, sem link nem deep link.
   - **Os dois templates** usam `{{ .Token }}`: "Confirm signup" e "Reset Password".
 - Com "Confirm email" ativo, o Supabase **não cria sessão** para quem não confirmou. O `signUp` retorna o usuário sem sessão, e o `signInWithPassword` falha com o código `email_not_confirmed`.
-- **SMTP próprio (Brevo, plano gratuito) obrigatório também no `dev`:**
+- **SMTP próprio obrigatório também no `dev`:**
   - no plano Free, o Supabase **recusa templates personalizados** sem SMTP próprio, e sem o template com `{{ .Token }}` o fluxo por código não funciona;
   - o SMTP padrão só entrega para membros da equipe da organização e tem limite baixíssimo de envios por hora.
+- **SMTP escolhido: o Gmail da igreja** (a mesma conta usada para Supabase, Firebase e lojas).
+  - `smtp.gmail.com`, porta `587`, usuário = o endereço do Gmail, senha = **senha de app** do Google (exige verificação em 2 etapas ativa na conta). Limite de ~500 e-mails/dia, suficiente para a igreja.
+  - Endereço e senha de app ficam em `supabase/.env` (`SMTP_USER`, `SMTP_PASS`), lidos no `config.toml` via `env(...)`. Nunca no repositório.
+  - Esses e-mails são **só do login** (código de cadastro e de recuperação de senha). Avisos aos membros são push via Firebase (etapa 6), não e-mail.
 - Templates de e-mail em pt-BR, versionados em `supabase/templates/` e ligados no `config.toml`.
 - Toda essa configuração fica no `supabase/config.toml` e é aplicada com `supabase config push`, nunca pelo painel.
 

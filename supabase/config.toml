@@ -247,9 +247,19 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# app-igreja: SMTP = Gmail da igreja (senha de app do Google). SMTP_USER e SMTP_PASS em supabase/.env.
+# PENDENTE (B1.8): descomentar este bloco e os templates abaixo, depois `supabase config push`.
+# [auth.email.smtp]
+# enabled = true
+# host = "smtp.gmail.com"
+# port = 587
+# user = "env(SMTP_USER)"
+# pass = "env(SMTP_PASS)"
+# admin_email = "env(SMTP_USER)"
+# sender_name = "App da Igreja"
+
 # app-igreja: confirmação e recuperação de senha por código OTP ({{ .Token }}), sem link.
-# PENDENTE: o Supabase só aceita templates próprios com SMTP próprio configurado ([auth.email.smtp]).
-# Descomentar junto com o SMTP (Brevo) e rodar `supabase config push`.
+# O Supabase só aceita templates próprios com SMTP próprio configurado (bloco acima).
 # [auth.email.template.confirmation]
 # subject = "Seu código de confirmação"
 # content_path = "./supabase/templates/confirmation.html"

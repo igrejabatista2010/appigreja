@@ -1,0 +1,23 @@
+﻿{
+  "@@locale": "pt",
+
+  "appTitle": "App da Igreja",
+
+  "navHome": "Início",
+  "navSchedule": "Agenda",
+  "navAnnouncements": "Comunicados",
+  "navPrayer": "Oração",
+  "navMore": "Mais",
+
+  "comingSoon": "Em breve",
+  "loading": "Carregando",
+  "retry": "Tentar novamente",
+  "emptyDefault": "Nada por aqui ainda.",
+
+  "errorGeneric": "Algo deu errado. Tente novamente.",
+  "errorNetwork": "Sem conexão. Verifique sua internet e tente novamente.",
+  "errorAuth": "Não foi possível entrar. Confira seus dados e tente novamente.",
+  "errorPermission": "Você não tem permissão para fazer isso.",
+  "errorNotFound": "Não encontramos o que você procurava.",
+  "errorValidation": "Confira os dados informados e tente novamente."
+}

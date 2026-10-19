@@ -16,13 +16,14 @@ Rodar no emulador: `flutter run --dart-define-from-file=env/dev.json`.
 
 ## Etapa 1 — Fundação
 
-- [ ] A1.1 `pubspec.yaml` com os pacotes da seção 3 da skill, **exceto os de push** (`firebase_*`, `flutter_local_notifications`, que entram na etapa 6). Remover o app de exemplo.
-- [ ] A1.2 Inicialização: `main.dart` com `Supabase.initialize` lendo `env/dev.json`, `tz.initializeTimeZones()` e `.vscode/launch.json` com o `--dart-define-from-file`.
-- [ ] A1.3 `core/`: `di/injection.dart` (get_it), `error/` (`Failure` sealed + exceptions), `usecase/usecase.dart` (`UseCase`, `NoParams`), `utils/church_time.dart` (`nowSp`, `todaySp`, `toSp`) com testes.
-- [ ] A1.4 Tema com cores e logo placeholder em `core/theme`; l10n pt_BR (ARB + `flutter gen-l10n`).
-- [ ] A1.5 `core/widgets`: carregando, erro com "Tentar novamente", vazio e `RoleGuard`.
-- [ ] A1.6 `go_router`: shell responsivo (`NavigationBar` < 600, `NavigationRail` ≥ 600), destinos principais e páginas placeholder.
-- [ ] A1.7 `analysis_options.yaml` com lints estritos; `flutter analyze` e `flutter test` limpos.
+- [x] A1.1 `pubspec.yaml` com os pacotes da seção 3 da skill, **exceto** os de push (`firebase_*`, `flutter_local_notifications`: etapa 6) e `flutter_launcher_icons`/`flutter_native_splash` (A7.3, precisam de configuração e das imagens da igreja). Mais o `http`, para reconhecer erro de rede do Postgrest (ver skill, seção 3). App de exemplo removido.
+- [ ] A1.2 Inicialização: `main.dart` com `Supabase.initialize` lendo `env/dev.json`, `initChurchTime()`, `Intl` em pt_BR e `.vscode/launch.json` com o `--dart-define-from-file` (feitos).
+  - **Falta rodar no emulador** para confirmar a conexão com o Supabase. Bloqueio: não há emulador Android nesta máquina e o build falha por falta do NDK 28.2.13676358 (instalar pelo SDK Manager do Android Studio → SDK Tools → NDK (Side by side)).
+- [x] A1.3 `core/`: `di/injection.dart` (get_it), `error/failures.dart` (`Failure` sealed) e `error/failure_mapper.dart` (exceções → `Failure`), `usecase/usecase.dart` (`UseCase`, `NoParams`), `utils/church_time.dart` (`nowSp`, `todaySp`, `toSp`), `config/env.dart`; testes de `church_time` e do mapeador.
+- [x] A1.4 `core/theme` com cor semente placeholder (claro e escuro); l10n pt-BR (`app_pt.arb` + `flutter gen-l10n`, gerado em `core/l10n/generated/`, versionado) e `FailureL10n` para textos de erro.
+- [x] A1.5 `core/widgets`: `AppLoading`, `AppErrorView` (com "Tentar novamente") e `AppEmptyView`, com testes. **`RoleGuard` foi para A2.5**, porque lê a role do `AuthBloc`, que só existe na etapa 2.
+- [x] A1.6 `go_router` com shell responsivo (`NavigationBar` < 600, `NavigationRail` ≥ 600), 5 destinos e páginas placeholder, com testes de layout e navegação.
+- [x] A1.7 `analysis_options.yaml` com lints estritos (strict-casts/inference/raw-types e mais 7 regras); `flutter analyze` sem avisos e `flutter test` com 29 testes passando.
 
 ## Etapa 2 — Auth e membros (UC-01 a UC-10)
 
@@ -30,7 +31,7 @@ Rodar no emulador: `flutter run --dart-define-from-file=env/dev.json`.
 - [ ] A2.2 Feature `auth` (domain + data): `signUp` com metadata e detecção de e-mail já cadastrado (`identities` vazio), `verifyOTP` (signup e recovery), `resend`, `signIn` (`email_not_confirmed`), `resetPasswordForEmail`, `updateUser` (nova senha), `signOut`.
 - [ ] A2.3 Telas: login, cadastro, confirmar e-mail (código + reenviar em 60s), recuperar senha (código + nova senha), aguardando aprovação ("Verificar novamente"), sem permissão. ← B1.8 para testar com e-mail real
 - [ ] A2.4 `AuthBloc` global: sessão persistida, carrega a própria linha de `members`, escuta o Realtime (`user_id=eq.<uid>`), `blocked` → `signOut` + mensagem.
-- [ ] A2.5 Guardas do `go_router` (`refreshListenable`), com testes para sem sessão, pending, member, leader e admin.
+- [ ] A2.5 Guardas do `go_router` (`refreshListenable`) e widget `RoleGuard(minRole: ...)` em `core/widgets`, com testes para sem sessão, pending, member, leader e admin.
 - [ ] A2.6 UC-05 Excluir minha conta (confirmação dupla). ← B2.4
 - [ ] A2.7 UC-06 Meu perfil: editar nome, telefone, nascimento, endereço, gênero, estado civil e foto (compressão 512px); batismo e membresia só leitura. ← B2.0, B2.3
 - [ ] A2.8 UC-07 Diretório: member pela RPC; leader/admin direto na tabela, com "Ligar" e "WhatsApp". Busca com debounce de 400ms e paginação. ← B2.1

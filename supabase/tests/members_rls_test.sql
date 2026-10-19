@@ -1,4 +1,4 @@
--- Testes de RLS e triggers de members (UC-01, UC-06, UC-07, UC-09, UC-10).
+-- Testes de RLS e triggers de members (UC-01, UC-06, UC-07, UC-09, UC-10, ficha B2.0).
 --
 -- Rodar:  supabase db query --linked -f supabase/tests/members_rls_test.sql
 --
@@ -91,9 +91,27 @@ begin
   end if;
   passed := passed + 1;
 
-  update public.members set full_name = 'T Member Editado', phone = '11888880000' where id = m_member;
+  update public.members
+     set full_name = 'T Member Editado', phone = '11888880000',
+         address = 'Rua Teste, 1', gender = 'female', marital_status = 'married'
+   where id = m_member;
   get diagnostics n = row_count;
-  if n <> 1 then raise exception 'FALHOU: member não conseguiu editar o próprio perfil'; end if;
+  if n <> 1 then raise exception 'FALHOU: member não conseguiu editar o próprio perfil (incluindo a ficha)'; end if;
+  passed := passed + 1;
+
+  ok := false;
+  begin
+    update public.members set baptism_date = '2020-01-01' where id = m_member;
+  exception when others then ok := true;
+  end;
+  if not ok then raise exception 'FALHOU: member conseguiu alterar a própria data de batismo'; end if;
+
+  ok := false;
+  begin
+    update public.members set membership_date = '2020-01-01' where id = m_member;
+  exception when others then ok := true;
+  end;
+  if not ok then raise exception 'FALHOU: member conseguiu alterar a própria data de membresia'; end if;
   passed := passed + 1;
 
   ok := false;
@@ -176,6 +194,10 @@ begin
   update public.members set role = 'leader', status = 'approved' where id = m_member;
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FALHOU: admin não conseguiu alterar a role de outro membro'; end if;
+
+  update public.members set baptism_date = '2015-05-10', membership_date = '2016-01-03' where id = m_member;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FALHOU: admin não conseguiu preencher batismo/membresia de outro membro'; end if;
   passed := passed + 1;
 
   ok := false;

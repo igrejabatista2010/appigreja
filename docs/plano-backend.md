@@ -30,13 +30,17 @@ O `dev` é descartável: serve para desenvolver e será desligado depois que o `
 - [x] B1.5 Vínculo `auth.users` → `members` só após confirmar o e-mail (`20261019195112_link_auth_users_to_members`).
 - [x] B1.6 Funções de RLS movidas para o schema `private` e políticas unificadas, conforme advisors (`20261019195337_move_rls_helpers_to_private_schema`).
 - [x] B1.7 Teste `supabase/tests/members_rls_test.sql`: 13 grupos passando.
-- [ ] B1.8 **SMTP próprio (Brevo) + templates pt-BR com `{{ .Token }}`.** Descomentar os templates no `config.toml` e `config push`.
+- [ ] B1.8 **SMTP pelo Gmail da igreja + templates pt-BR com `{{ .Token }}`** (fazer quando for testar cadastro/login, etapa 2).
+  1. No Gmail da igreja: ativar a verificação em 2 etapas e gerar uma **senha de app**.
+  2. Em `supabase/.env`: `SMTP_USER=<gmail da igreja>` e `SMTP_PASS=<senha de app>`.
+  3. Descomentar no `config.toml` o bloco `[auth.email.smtp]` e os dois templates; `supabase config diff` e `config push`.
+  4. Testar: cadastro com um e-mail qualquer recebe o código em pt-BR.
   - Bloqueia o fluxo por código do UC-01 e UC-03: sem SMTP, o Free não aceita templates e o e-mail padrão só chega para membros da equipe do Supabase. → A2.3
 - [ ] B1.9 Script `supabase/scripts/first_admin.sql` (fora das migrations): promove a admin aprovado o membro com um e-mail informado. Rodar uma vez por ambiente.
 
 ## Etapa 2 — Auth e membros (UC-01 a UC-10, UC-40)
 
-- [ ] B2.0 Campos da ficha em `members` (`address`, `gender`, `marital_status`, `baptism_date`, `membership_date`) + enums + guarda: o próprio membro não altera batismo/membresia; + teste. → A2.7, A2.11
+- [x] B2.0 Campos da ficha em `members` (`address`, `gender`, `marital_status`, `baptism_date`, `membership_date`) + enums + guarda: o próprio membro não altera batismo/membresia; + teste (`20261019204436_add_profile_fields_to_members`; `members_rls_test.sql` com 14 grupos). → A2.7, A2.11
 - [ ] B2.1 RPC `public.get_member_directory(search, limit, offset)` → `id, full_name, photo_url`, só aprovados, + teste. → A2.8
 - [ ] B2.2 RPC `public.get_birthdays(from_date, to_date)` → sem o ano, com virada de ano (29/dez–04/jan), + teste. → A2.9
 - [ ] B2.3 Bucket público `avatars` + políticas (cada usuário escreve só na própria pasta), + teste. → A2.7
@@ -87,7 +91,7 @@ O `dev` é descartável: serve para desenvolver e será desligado depois que o `
 
 - [ ] B7.1 Criar o projeto `prod` em São Paulo, plano Pro, na conta da igreja.
 - [ ] B7.2 `link` no prod → `db push` → `config push` → `functions deploy` → `secrets set` → segredos no Vault.
-- [ ] B7.3 SMTP de produção e templates conferidos (envio real de cadastro e recuperação de senha).
+- [ ] B7.3 SMTP do Gmail da igreja e templates no prod (mesmo `config.toml`, `SMTP_*` no `.env`), conferidos com envio real de cadastro e recuperação de senha.
 - [ ] B7.4 `first_admin.sql` com o e-mail da cliente.
 - [ ] B7.5 Importação da InChurch no prod (B2.6) e conferência do relatório.
 - [ ] B7.6 Advisors sem avisos, backups diários conferidos, proteção de senhas vazadas ativada.
